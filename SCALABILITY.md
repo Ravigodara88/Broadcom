@@ -6,7 +6,8 @@ submission already uses deterministic scoring over column name, table context,
 sample values, and data type, so throughput scales linearly and parallelization
 is straightforward. In production, I would process columns in batches, cache
 tokenized pattern features, and only send ambiguous cases to an optional
-secondary review model.
+secondary review model. The practical target is at least ~167 columns/second
+(5,000 columns / 30 seconds), with headroom from multi-core batch execution.
 
 RAG freshness should be handled as a content pipeline, not a manual task. When
 the product team adds or changes a masking function, the documentation source
@@ -18,7 +19,9 @@ At 500 customers running schema analysis weekly, the core detector cost is
 effectively zero in LLM spend because it is deterministic. If an optional LLM
 fallback were enabled for, say, 5% of ambiguous columns and a typical weekly
 run sent 250 columns to a small model at low token volume, the monthly cost
-would still be manageable, but the first optimization should be to reduce LLM
+would still be manageable. A concrete estimate is roughly $150-$300/month at
+this scale (about 0.5M fallback calls/month with very small prompt/response
+payloads and aggressive caching). The first optimization should be to reduce LLM
 use through better rules, caching, and review-queue thresholds rather than to
 scale model traffic blindly.
 

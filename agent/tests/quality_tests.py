@@ -55,6 +55,12 @@ def test_date_shift_answer_is_grounded() -> None:
     assert response_cites_source(response)
 
 
+def test_ssn_acronym_question_is_grounded() -> None:
+    response = agent.chat("How should I mask SSN values while keeping only the last four digits?")
+    assert any(keyword in response.lower() for keyword in ["ssn", "social security", "last four", "mask"])
+    assert response_cites_source(response)
+
+
 def test_doc_question_triggers_retrieval() -> None:
     with tool_call_tracker() as tracker:
         agent.chat("What parameters does EMAIL_MASK accept?")

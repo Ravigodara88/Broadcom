@@ -31,6 +31,22 @@ _emb_cache: dict[str, np.ndarray] = {}
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_EVAL_PATH = Path(__file__).with_name("eval").joinpath("masking_queries.json")
 
+# Deterministic query rewrite hints to improve lexical matching without LLM calls.
+QUERY_TERM_EXPANSIONS: dict[str, str] = {
+    "ssn": "social security number",
+    "dob": "date of birth",
+    "pii": "personally identifiable information",
+    "gdpr": "general data protection regulation",
+    "ccpa": "california consumer privacy act",
+    "ip": "internet protocol",
+    "ipv4": "internet protocol version 4",
+    "ipv6": "internet protocol version 6",
+    "acct": "account number",
+}
+
+RERANK_FUSION_WEIGHT = 0.7
+RERANK_KEYWORD_WEIGHT = 0.3
+
 
 def _get_embed_model() -> SentenceTransformer:
     """Lazy-load the sentence-transformer model (cached at module level).
@@ -96,43 +112,145 @@ def _get_chunk_embeddings(chunks: list[DocumentChunk]) -> np.ndarray:
     return np.stack([_emb_cache[c.chunk_id] for c in chunks])
 
 
+def _normalize_query_text(query: str) -> str:
+    return re.sub(r"\s+", " ", query.strip())
+
+
+def _build_query_variants(query: str) -> list[str]:
+    """Build deterministic query variants using acronym expansion (no LLM call)."""
+    normalized = _normalize_query_text(query)
+    if not normalized:
+        return []
+
+    expansions: list[str] = []
+    for token in _tokenize(normalized):
+        expansion = QUERY_TERM_EXPANSIONS.get(token)
+        if expansion and expansion not in expansions:
+            expansions.append(expansion)
+
+    variants = [normalized]
+    if expansions:
+        variants.append(f"{normalized} ({'; '.join(expansions)})")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in variants:
+        key = candidate.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    return deduped
+
+
+def _vector_scores_for_queries(
+    query_variants: list[str],
+    candidates: list[DocumentChunk],
+    corpus_embeddings: np.ndarray,
+) -> dict[str, float]:
+    model = _get_embed_model()
+    query_embeddings = model.encode(query_variants, convert_to_numpy=True, normalize_embeddings=True).astype("float32")
+
+    dim = corpus_embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(corpus_embeddings)
+    scores_arr, idx_arr = index.search(query_embeddings, len(candidates))
+
+    vector_scores: dict[str, float] = {}
+    for row_scores, row_indices in zip(scores_arr, idx_arr):
+        for score, idx in zip(row_scores, row_indices):
+            if idx < 0:
+                continue
+            chunk_id = candidates[idx].chunk_id
+            current = vector_scores.get(chunk_id)
+            if current is None or float(score) > current:
+                vector_scores[chunk_id] = float(score)
+    return vector_scores
+
+
+def _bm25_scores_for_queries(query_variants: list[str], candidates: list[DocumentChunk]) -> dict[str, float]:
+    tokenized_docs = [_tokenize(chunk.text) for chunk in candidates]
+    bm25 = BM25Okapi(tokenized_docs)
+
+    bm25_scores: dict[str, float] = {chunk.chunk_id: float("-inf") for chunk in candidates}
+    for query_variant in query_variants:
+        query_tokens = _tokenize(query_variant)
+        variant_scores = bm25.get_scores(query_tokens)
+        for chunk, score in zip(candidates, variant_scores):
+            current = bm25_scores[chunk.chunk_id]
+            if float(score) > current:
+                bm25_scores[chunk.chunk_id] = float(score)
+    return bm25_scores
+
+
+def _keyword_overlap_score(query_tokens: set[str], text_tokens: set[str]) -> float:
+    if not query_tokens:
+        return 0.0
+    overlap_count = len(query_tokens.intersection(text_tokens))
+    return overlap_count / len(query_tokens)
+
+
+def _min_max_normalize(scores: dict[str, float]) -> dict[str, float]:
+    if not scores:
+        return {}
+    min_score = min(scores.values())
+    max_score = max(scores.values())
+    if max_score - min_score <= 1e-12:
+        return {key: 1.0 for key in scores}
+    return {key: (value - min_score) / (max_score - min_score) for key, value in scores.items()}
+
+
+def _hybrid_rerank_scores(
+    chunk_by_id: dict[str, DocumentChunk],
+    fused_scores: dict[str, float],
+    query_variants: list[str],
+    *,
+    fusion_weight: float = RERANK_FUSION_WEIGHT,
+    keyword_weight: float = RERANK_KEYWORD_WEIGHT,
+) -> tuple[dict[str, float], dict[str, float]]:
+    query_tokens: set[str] = set()
+    for query_variant in query_variants:
+        query_tokens.update(_tokenize(query_variant))
+
+    keyword_scores: dict[str, float] = {}
+    for chunk_id, chunk in chunk_by_id.items():
+        keyword_scores[chunk_id] = _keyword_overlap_score(query_tokens, set(_tokenize(chunk.text)))
+
+    normalized_fused = _min_max_normalize(fused_scores)
+    normalized_keyword = _min_max_normalize(keyword_scores)
+
+    hybrid_scores: dict[str, float] = {}
+    for chunk_id in chunk_by_id:
+        hybrid_scores[chunk_id] = (
+            fusion_weight * normalized_fused.get(chunk_id, 0.0)
+            + keyword_weight * normalized_keyword.get(chunk_id, 0.0)
+        )
+
+    return hybrid_scores, keyword_scores
+
+
 def retrieve(
     query: str,
     pii_category_filter: str | None = None,
     top_k: int = 3,
     corpus_dir: Path | str = DEFAULT_CORPUS_DIR,
 ) -> list[dict[str, Any]]:
-    """Retrieve relevant chunks using FAISS vector similarity, BM25, and RRF."""
+    """Retrieve relevant chunks using deterministic rewrite, FAISS, BM25, RRF, and hybrid reranking."""
+
+    query_variants = _build_query_variants(query)
+    if not query_variants:
+        return []
 
     chunks = load_corpus(corpus_dir)
     candidates = _filter_chunks(chunks, pii_category_filter)
     if not candidates:
         return []
 
-    # --- Vector search: sentence-transformers embeddings + FAISS IndexFlatIP ---
+    # --- Vector search over one or more deterministic query variants ---
     corpus_embeddings = _get_chunk_embeddings(candidates)  # (N, dim), cosine-ready
-    model = _get_embed_model()
-    query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True).astype("float32")
+    vector_scores = _vector_scores_for_queries(query_variants, candidates, corpus_embeddings)
 
-    dim = corpus_embeddings.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(corpus_embeddings)
-    scores_arr, idx_arr = index.search(query_embedding, len(candidates))
-
-    vector_scores: dict[str, float] = {}
-    for score, idx in zip(scores_arr[0], idx_arr[0]):
-        if idx >= 0:
-            vector_scores[candidates[idx].chunk_id] = float(score)
-
-    # --- BM25 search: rank_bm25.BM25Okapi ---
-    query_tokens = _tokenize(query)
-    tokenized_docs = [_tokenize(chunk.text) for chunk in candidates]
-    bm25 = BM25Okapi(tokenized_docs)
-    bm25_raw = bm25.get_scores(query_tokens)
-    bm25_scores: dict[str, float] = {
-        chunk.chunk_id: float(score)
-        for chunk, score in zip(candidates, bm25_raw)
-    }
+    # --- BM25 search across the same query variants ---
+    bm25_scores = _bm25_scores_for_queries(query_variants, candidates)
 
     # --- RRF fusion ---
     vector_rank = _sorted_ids(vector_scores)
@@ -146,12 +264,16 @@ def retrieve(
                 fused_scores[chunk.chunk_id] = fused_scores.get(chunk.chunk_id, 0.0) + 0.02
 
     chunk_by_id = {chunk.chunk_id: chunk for chunk in candidates}
+    hybrid_scores, keyword_scores = _hybrid_rerank_scores(chunk_by_id, fused_scores, query_variants)
+
     ordered_ids = sorted(
-        fused_scores,
+        hybrid_scores,
         key=lambda chunk_id: (
-            fused_scores[chunk_id],
+            hybrid_scores[chunk_id],
+            fused_scores.get(chunk_id, 0.0),
             vector_scores.get(chunk_id, 0.0),
             bm25_scores.get(chunk_id, 0.0),
+            keyword_scores.get(chunk_id, 0.0),
         ),
         reverse=True,
     )
@@ -175,14 +297,17 @@ def retrieve(
                 "source_file": chunk.source_file,
                 "section": chunk.section,
                 "text": chunk.text,
-                "score": round(fused_scores[chunk_id], 6),
+                "score": round(hybrid_scores[chunk_id], 6),
+                "fusion_score": round(fused_scores.get(chunk_id, 0.0), 6),
                 "vector_score": round(vector_scores.get(chunk_id, 0.0), 6),
                 "bm25_score": round(bm25_scores.get(chunk_id, 0.0), 6),
+                "keyword_score": round(keyword_scores.get(chunk_id, 0.0), 6),
                 "metadata": {
                     "pii_category": chunk.pii_category,
                     "pii_categories": list(chunk.pii_categories),
                     "anchor": chunk.anchor,
                     "source": f"{chunk.source_file}#{chunk.anchor}",
+                    "query_variants": query_variants,
                 },
             }
         )

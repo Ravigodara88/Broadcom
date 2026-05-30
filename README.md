@@ -51,6 +51,8 @@ User Question
 | Hybrid RAG              |
 | SentenceTransformer +   |
 | FAISS + BM25 + RRF      |
+| deterministic rewrite + |
+| hybrid reranking        |
 | pii_category filtering  |
 +-------------------------+
    |
@@ -114,8 +116,9 @@ HF_HUB_OFFLINE=1 python3 -m rag.retrieve
   orchestration, not chatbot creativity, so documentation questions always go
   through retrieval before answering.
 - Implemented hybrid retrieval with sentence-transformer embeddings (FAISS),
-  BM25, and Reciprocal Rank Fusion because the brief explicitly requires hybrid
-  retrieval rather than pure semantic search.
+  BM25, Reciprocal Rank Fusion, deterministic query rewrite, and hybrid
+  reranking because the brief explicitly requires hybrid retrieval rather than
+  pure semantic search.
 - Routed low-confidence detections into a review queue instead of forcing
   automation. That reflects the risk asymmetry in masking workflows, where a
   false negative is more serious than extra review effort.
@@ -133,6 +136,8 @@ HF_HUB_OFFLINE=1 python3 -m rag.retrieve
 - Add CI automation that regenerates RAG evaluation results and the A/B baseline
   markdown on every change.
 
+For a prioritized roadmap, see FUTURE_ENHANCEMENTS.md.
+
 ## Test Coverage Summary
 
 Covered:
@@ -141,6 +146,7 @@ Covered:
   review-required edge cases
 - golden-set recall regression and category mapping
 - hybrid retrieval Recall@3 against a 10-query evaluation set
+- deterministic acronym-aware query rewrite and hybrid reranking regressions
 - masking configuration generation, documentation references, and integration
   with detector output
 - agent grounding, out-of-scope refusal, schema-required prompting, detector
