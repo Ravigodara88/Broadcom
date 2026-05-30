@@ -1,0 +1,72 @@
+[
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "full_name",
+    "data_type": "VARCHAR(120)",
+    "sample_values": ["Aarav Mehta", "Sophia Turner"],
+    "nullable": false
+  },
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "email_address",
+    "data_type": "VARCHAR(255)",
+    "sample_values": ["user@example.com", "alice@company.org"],
+    "nullable": true
+  },
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "mobile_number",
+    "data_type": "VARCHAR(20)",
+    "sample_values": ["+1 415-555-0199", "+1 212-555-0187"],
+    "nullable": true
+  },
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "cust_acct_no",
+    "data_type": "VARCHAR(20)",
+    "sample_values": ["ACC-9876543", "****1234"],
+    "nullable": true
+  },
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "date_of_birth",
+    "data_type": "DATE",
+    "sample_values": ["1989-04-12", "1994-11-03"],
+    "nullable": true
+  },
+  {
+    "table_name": "LOGIN_AUDIT",
+    "column_name": "client_ip",
+    "data_type": "VARCHAR(45)",
+    "sample_values": ["192.168.1.10", "2001:db8::1"],
+    "nullable": false
+  },
+  {
+    "table_name": "ORDERS",
+    "column_name": "transaction_id",
+    "data_type": "BIGINT",
+    "sample_values": ["100001", "100002"],
+    "nullable": false
+  },
+  {
+    "table_name": "ORDERS",
+    "column_name": "order_ref",
+    "data_type": "VARCHAR(32)",
+    "sample_values": ["ORD-2026-000123", "ORD-2026-000124"],
+    "nullable": false
+  },
+  {
+    "table_name": "CUSTOMERS",
+    "column_name": "account_status",
+    "data_type": "VARCHAR(20)",
+    "sample_values": ["ACTIVE", "LOCKED"],
+    "nullable": false
+  },
+  {
+    "table_name": "CONTACTS",
+    "column_name": "secondary_phone",
+    "data_type": "VARCHAR(20)",
+    "sample_values": ["unknown", "null"],
+    "nullable": true
+  }
+]
