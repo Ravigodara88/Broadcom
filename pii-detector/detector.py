@@ -88,6 +88,8 @@ class PiiDetector:
             reasoning = self._build_negative_reasoning(top, second, review_required)
 
         return {
+            "table_name": table_name,
+            "column_name": column_name,
             "is_pii": is_pii,
             "confidence": confidence,
             "pii_category": pii_category,

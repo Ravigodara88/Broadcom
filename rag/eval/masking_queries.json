@@ -1,0 +1,48 @@
+[
+  {
+    "query": "what is data masking and why do enterprises use it",
+    "expected_title": "What Is Data Masking and Why Enterprises Use It"
+  },
+  {
+    "query": "which masking function should i use for customer full names",
+    "pii_category_filter": "FULL_NAME",
+    "expected_title": "NAME_RANDOMIZE Usage, Parameters, and Examples"
+  },
+  {
+    "query": "how to mask email addresses and keep the domain shape",
+    "pii_category_filter": "EMAIL",
+    "expected_title": "EMAIL_MASK Usage, Parameters, and Examples"
+  },
+  {
+    "query": "what parameters does phone mask accept",
+    "pii_category_filter": "PHONE",
+    "expected_title": "PHONE_MASK and SSN_MASK Usage, Parameters, and Examples"
+  },
+  {
+    "query": "how should i mask social security numbers and show last four digits",
+    "pii_category_filter": "SSN",
+    "expected_title": "PHONE_MASK and SSN_MASK Usage, Parameters, and Examples"
+  },
+  {
+    "query": "when should i use account mask instead of credit card mask",
+    "pii_category_filter": "ACCOUNT_NUMBER",
+    "expected_title": "CREDIT_CARD_MASK and ACCOUNT_MASK Usage, Parameters, and Examples"
+  },
+  {
+    "query": "what does date shift do and what parameters does it accept",
+    "pii_category_filter": "DATE_OF_BIRTH",
+    "expected_title": "DATE_SHIFT Usage, Parameters, and Examples"
+  },
+  {
+    "query": "how do i comply with gdpr and ccpa when masking customer data",
+    "expected_title": "GDPR and CCPA Compliance in Data Masking Workflows"
+  },
+  {
+    "query": "how do i configure and run a masking job",
+    "expected_title": "How To Configure and Run a Masking Job"
+  },
+  {
+    "query": "how can i improve masking performance for large tables",
+    "expected_title": "Masking Performance Tuning for Large Tables"
+  }
+]
