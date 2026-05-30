@@ -1,8 +1,4 @@
-"""PII pattern library and masking-function mappings.
-
-Phase 1 captures the required taxonomy and exact category-to-mask mapping from
-the candidate task. Matching logic will be added in Phase 2.
-"""
+"""Pattern and taxonomy configuration for the deterministic PII detector."""
 
 from __future__ import annotations
 
@@ -19,5 +15,296 @@ PII_CATEGORY_TO_MASKING_FUNCTION = {
     "NATIONAL_ID": "NATIONAL_ID_MASK",
 }
 
-
 REQUIRED_PII_CATEGORIES = tuple(PII_CATEGORY_TO_MASKING_FUNCTION.keys())
+
+NON_INFORMATIVE_SAMPLE_VALUES = {
+    "",
+    "n/a",
+    "na",
+    "nil",
+    "none",
+    "null",
+    "masked",
+    "redacted",
+    "unknown",
+}
+
+BOOLEAN_LIKE_VALUES = {
+    "true",
+    "false",
+    "yes",
+    "no",
+    "y",
+    "n",
+    "0",
+    "1",
+}
+
+NEGATIVE_CONTEXT_TOKENS = {
+    "status": 0.22,
+    "type": 0.22,
+    "count": 0.24,
+    "score": 0.24,
+    "flag": 0.24,
+    "hash": 0.24,
+    "tier": 0.22,
+    "bucket": 0.20,
+    "version": 0.20,
+    "opt": 0.22,
+    "preference": 0.22,
+    "consent": 0.22,
+    "verified": 0.24,
+    "indicator": 0.20,
+}
+
+CATEGORY_RULES = {
+    "FULL_NAME": {
+        "phrases": {
+            "full_name": 0.62,
+            "customer_name": 0.54,
+            "employee_name": 0.54,
+            "contact_name": 0.54,
+            "first_name": 0.50,
+            "last_name": 0.50,
+            "given_name": 0.50,
+            "family_name": 0.50,
+            "nombre_completo": 0.64,
+            "apellido": 0.48,
+            "cust_fn": 0.46,
+            "fname": 0.42,
+            "lname": 0.42,
+        },
+        "tokens": {
+            "name": 0.16,
+            "first": 0.14,
+            "last": 0.14,
+            "given": 0.14,
+            "family": 0.14,
+            "surname": 0.16,
+            "apellido": 0.18,
+            "nombre": 0.18,
+            "fname": 0.18,
+            "lname": 0.18,
+        },
+        "table_tokens": {
+            "customer": 0.05,
+            "user": 0.05,
+            "employee": 0.05,
+            "contact": 0.05,
+            "person": 0.05,
+        },
+    },
+    "EMAIL": {
+        "phrases": {
+            "email_address": 0.66,
+            "email": 0.60,
+            "e_mail": 0.60,
+            "correo_electronico": 0.66,
+            "mail_id": 0.48,
+        },
+        "tokens": {
+            "email": 0.18,
+            "mail": 0.08,
+            "correo": 0.18,
+            "electronico": 0.16,
+        },
+        "table_tokens": {
+            "user": 0.04,
+            "customer": 0.04,
+            "contact": 0.04,
+            "subscriber": 0.04,
+        },
+    },
+    "PHONE": {
+        "phrases": {
+            "phone_number": 0.66,
+            "mobile_number": 0.66,
+            "phone": 0.56,
+            "mobile": 0.58,
+            "telephone": 0.58,
+            "telefono": 0.62,
+            "ph_no": 0.62,
+            "contact_number": 0.52,
+            "msisdn": 0.68,
+        },
+        "tokens": {
+            "phone": 0.18,
+            "mobile": 0.18,
+            "telephone": 0.16,
+            "telefono": 0.18,
+            "tel": 0.10,
+            "ph": 0.08,
+            "msisdn": 0.20,
+        },
+        "table_tokens": {
+            "customer": 0.04,
+            "contact": 0.04,
+            "subscriber": 0.04,
+            "user": 0.04,
+        },
+    },
+    "SSN": {
+        "phrases": {
+            "social_security_number": 0.84,
+            "social_security": 0.78,
+            "ssn": 0.76,
+        },
+        "tokens": {
+            "ssn": 0.24,
+            "social": 0.18,
+            "security": 0.18,
+        },
+        "table_tokens": {
+            "employee": 0.04,
+            "hr": 0.04,
+            "payroll": 0.04,
+            "customer": 0.04,
+        },
+    },
+    "CREDIT_CARD": {
+        "phrases": {
+            "credit_card_number": 0.84,
+            "credit_card": 0.76,
+            "card_number": 0.70,
+            "cc_number": 0.76,
+            "payment_card": 0.74,
+        },
+        "tokens": {
+            "credit": 0.16,
+            "card": 0.18,
+            "cc": 0.18,
+            "pan": 0.18,
+            "payment": 0.10,
+        },
+        "table_tokens": {
+            "payment": 0.04,
+            "billing": 0.04,
+            "card": 0.04,
+        },
+    },
+    "ACCOUNT_NUMBER": {
+        "phrases": {
+            "account_number": 0.80,
+            "bank_account": 0.80,
+            "cust_acct_no": 0.84,
+            "acct_no": 0.78,
+            "acct_num": 0.78,
+            "iban": 0.82,
+            "account": 0.42,
+        },
+        "tokens": {
+            "account": 0.16,
+            "acct": 0.20,
+            "iban": 0.22,
+            "bank": 0.10,
+        },
+        "table_tokens": {
+            "customer": 0.04,
+            "account": 0.04,
+            "banking": 0.04,
+            "finance": 0.04,
+        },
+    },
+    "DATE_OF_BIRTH": {
+        "phrases": {
+            "date_of_birth": 0.84,
+            "birth_date": 0.80,
+            "dob": 0.78,
+            "birthday": 0.64,
+            "fecha_nacimiento": 0.84,
+        },
+        "tokens": {
+            "birth": 0.18,
+            "dob": 0.22,
+            "birthday": 0.18,
+            "fecha": 0.10,
+            "nacimiento": 0.18,
+        },
+        "table_tokens": {
+            "customer": 0.04,
+            "user": 0.04,
+            "employee": 0.04,
+            "person": 0.04,
+        },
+    },
+    "ADDRESS": {
+        "phrases": {
+            "street_address": 0.80,
+            "mailing_address": 0.80,
+            "billing_address": 0.76,
+            "shipping_address": 0.76,
+            "home_address": 0.80,
+            "address_line1": 0.76,
+            "address_line_1": 0.76,
+            "address": 0.36,
+            "addr1": 0.62,
+            "direccion_envio": 0.78,
+        },
+        "tokens": {
+            "address": 0.14,
+            "street": 0.16,
+            "addr": 0.14,
+            "mailing": 0.14,
+            "billing": 0.12,
+            "shipping": 0.12,
+            "home": 0.10,
+            "direccion": 0.18,
+        },
+        "table_tokens": {
+            "customer": 0.04,
+            "contact": 0.04,
+            "location": 0.04,
+        },
+    },
+    "IP_ADDRESS": {
+        "phrases": {
+            "ip_address": 0.84,
+            "client_ip": 0.82,
+            "source_ip": 0.82,
+            "ipv4": 0.72,
+            "ipv6": 0.72,
+            "ip": 0.44,
+        },
+        "tokens": {
+            "ip": 0.18,
+            "ipv4": 0.18,
+            "ipv6": 0.18,
+            "client": 0.06,
+            "source": 0.06,
+        },
+        "table_tokens": {
+            "login": 0.04,
+            "session": 0.04,
+            "network": 0.04,
+            "audit": 0.04,
+        },
+    },
+    "NATIONAL_ID": {
+        "phrases": {
+            "national_id": 0.84,
+            "national_identifier": 0.84,
+            "national_insurance_number": 0.88,
+            "government_id": 0.80,
+            "aadhaar_id": 0.88,
+            "aadhaar": 0.84,
+            "nat_id": 0.78,
+            "dni": 0.78,
+            "passport_number": 0.72,
+        },
+        "tokens": {
+            "national": 0.18,
+            "government": 0.18,
+            "aadhaar": 0.24,
+            "passport": 0.18,
+            "dni": 0.18,
+            "insurance": 0.14,
+            "identifier": 0.14,
+        },
+        "table_tokens": {
+            "customer": 0.04,
+            "identity": 0.04,
+            "kyc": 0.04,
+            "compliance": 0.04,
+        },
+    },
+}

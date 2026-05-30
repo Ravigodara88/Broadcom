@@ -1,1 +1,392 @@
-[]
+[
+  {
+    "input": {
+      "table_name": "USERS",
+      "column_name": "email_address",
+      "data_type": "VARCHAR(255)",
+      "sample_values": ["user@example.com", "alice@company.org"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "EMAIL"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CLIENTES",
+      "column_name": "correo_electronico",
+      "data_type": "VARCHAR(255)",
+      "sample_values": ["maria.garcia@example.es", "ventas@empresa.mx"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "EMAIL"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CONTACTS",
+      "column_name": "phone_number",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["+1 415-555-0199", "(212) 555-0187"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "PHONE"
+    }
+  },
+  {
+    "input": {
+      "table_name": "SUPPORT_CALLS",
+      "column_name": "ph_no",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["+91-98765-43210", "+91 99887 77665"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "PHONE"
+    }
+  },
+  {
+    "input": {
+      "table_name": "EMPLOYEES",
+      "column_name": "social_security_number",
+      "data_type": "VARCHAR(11)",
+      "sample_values": ["123-45-6789", "***-**-4321"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "SSN"
+    }
+  },
+  {
+    "input": {
+      "table_name": "KYC",
+      "column_name": "national_insurance_number",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["QQ123456C", "AB123456D"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "NATIONAL_ID"
+    }
+  },
+  {
+    "input": {
+      "table_name": "PAYMENTS",
+      "column_name": "credit_card_number",
+      "data_type": "VARCHAR(19)",
+      "sample_values": ["4111 1111 1111 1111", "5555-5555-5555-4444"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "CREDIT_CARD"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CUSTOMERS",
+      "column_name": "cust_acct_no",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["****1234", "ACC-9876543"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "ACCOUNT_NUMBER"
+    }
+  },
+  {
+    "input": {
+      "table_name": "BANKING",
+      "column_name": "iban",
+      "data_type": "VARCHAR(34)",
+      "sample_values": ["GB82 WEST 1234 5698 7654 32", "IBAN-89370400440532013000"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "ACCOUNT_NUMBER"
+    }
+  },
+  {
+    "input": {
+      "table_name": "USERS",
+      "column_name": "date_of_birth",
+      "data_type": "DATE",
+      "sample_values": ["1989-04-12", "1994-11-03"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "DATE_OF_BIRTH"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CLIENTES",
+      "column_name": "fecha_nacimiento",
+      "data_type": "DATE",
+      "sample_values": ["1988-07-22", "1992-01-05"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "DATE_OF_BIRTH"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CUSTOMER_PROFILE",
+      "column_name": "home_address",
+      "data_type": "VARCHAR(255)",
+      "sample_values": ["221B Baker Street", "742 Evergreen Terrace"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "ADDRESS"
+    }
+  },
+  {
+    "input": {
+      "table_name": "LOGIN_AUDIT",
+      "column_name": "client_ip",
+      "data_type": "VARCHAR(45)",
+      "sample_values": ["192.168.1.10", "2001:db8::1"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "IP_ADDRESS"
+    }
+  },
+  {
+    "input": {
+      "table_name": "CUSTOMER_MASTER",
+      "column_name": "full_name",
+      "data_type": "VARCHAR(120)",
+      "sample_values": ["Aarav Mehta", "Sophia Turner"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "FULL_NAME"
+    }
+  },
+  {
+    "input": {
+      "table_name": "PERSONAS",
+      "column_name": "apellido",
+      "data_type": "VARCHAR(120)",
+      "sample_values": ["Garcia", "Fernandez"],
+      "nullable": true
+    },
+    "expected": {
+      "is_pii": true,
+      "pii_category": "FULL_NAME"
+    }
+  },
+  {
+    "input": {
+      "table_name": "ORDERS",
+      "column_name": "transaction_id",
+      "data_type": "BIGINT",
+      "sample_values": ["100001", "100002"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "SESSIONS",
+      "column_name": "session_token",
+      "data_type": "VARCHAR(64)",
+      "sample_values": ["7ff8c0ab1e22", "bb92de14af90"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "PAYMENTS",
+      "column_name": "card_type",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["VISA", "MASTERCARD"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "CUSTOMERS",
+      "column_name": "account_status",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["ACTIVE", "LOCKED"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "USERS",
+      "column_name": "email_opt_in",
+      "data_type": "BOOLEAN",
+      "sample_values": ["true", "false"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "CONTACT_PREFERENCES",
+      "column_name": "phone_extension_count",
+      "data_type": "INTEGER",
+      "sample_values": ["2", "3"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "FRAUD_MODEL",
+      "column_name": "name_match_score",
+      "data_type": "DECIMAL(5,2)",
+      "sample_values": ["0.92", "0.71"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "SHIPMENTS",
+      "column_name": "address_count",
+      "data_type": "INTEGER",
+      "sample_values": ["1", "2"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "NETWORK_CONFIG",
+      "column_name": "ip_version",
+      "data_type": "VARCHAR(10)",
+      "sample_values": ["IPv4", "IPv6"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "HR_CHECKS",
+      "column_name": "dob_verified",
+      "data_type": "BOOLEAN",
+      "sample_values": ["true", "false"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "KYC_LOOKUPS",
+      "column_name": "nationality_code",
+      "data_type": "VARCHAR(3)",
+      "sample_values": ["IND", "USA"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "ETL_AUDIT",
+      "column_name": "created_at",
+      "data_type": "TIMESTAMP",
+      "sample_values": ["2026-05-28 12:45:00", "2026-05-28 12:50:00"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "ORDERS",
+      "column_name": "order_ref",
+      "data_type": "VARCHAR(32)",
+      "sample_values": ["ORD-2026-000123", "ORD-2026-000124"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "CRM",
+      "column_name": "customer_segment",
+      "data_type": "VARCHAR(20)",
+      "sample_values": ["GOLD", "SILVER"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  },
+  {
+    "input": {
+      "table_name": "MATCH_ENGINE",
+      "column_name": "customer_name_score",
+      "data_type": "DECIMAL(5,2)",
+      "sample_values": ["0.82", "0.63"],
+      "nullable": false
+    },
+    "expected": {
+      "is_pii": false,
+      "pii_category": null
+    }
+  }
+]
