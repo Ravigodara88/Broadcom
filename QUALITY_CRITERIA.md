@@ -14,7 +14,11 @@ These thresholds prioritize catching sensitive columns while allowing manageable
 
 - `confidence >= 0.85` -> auto-tag as PII and include masking recommendation
 - `0.60 <= confidence < 0.85` -> `review_required = true`
-- `confidence < 0.60` -> classify as non-PII unless strong conflicting pattern signals exist; if ambiguous, route to review
+- Deterministic routing rule: `confidence < 0.60` -> classify as non-PII unless strong conflicting pattern signals exist; if ambiguous, route to review
+
+Hybrid fallback note:
+- In hybrid mode, if blended rule+embedding confidence is low, an optional LLM fallback may still classify a column as PII.
+- For LLM-classified PII, keep `review_required = true` whenever returned confidence is `< 0.85`.
 
 Tie-break rule:
 - If top-2 category scores differ by `< 0.10`, set `review_required = true` even when classified as PII.
@@ -82,6 +86,6 @@ Day 1 is shippable only if all are true:
 
 - Implementation language: Python 3.10+
 - Test framework: `pytest`
-- Primary detector strategy: hybrid heuristic-first classifier with optional LLM fallback for ambiguous cases
+- Primary detector strategy: hybrid heuristic-first classifier with optional LLM fallback for low blended-confidence cases
 - Unit tests must be deterministic (no live API dependency)
 - Live-model checks, if any, run only behind an explicit flag (e.g., `RUN_LIVE_TESTS=1`)

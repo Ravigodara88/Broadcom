@@ -11,6 +11,7 @@ This document lists high-value enhancements that are intentionally out of scope 
 | P0 | Model warm-up utility command | Improves first-run reliability in restricted/offline environments | Zero startup failures due to missing embedding model cache |
 | P1 | Active learning from review queue | Improves PII recall/precision using analyst feedback loops | Recall improves over baseline while review volume decreases |
 | P1 | Optional LLM answer synthesizer with strict citations | Produces cleaner explanations while preserving grounding | User-rated answer clarity improves with citation compliance at 100% |
+| P1 | Per-query token and cost telemetry for optional LLM flows | Enables budget control and cost visibility once LLM features are enabled | Usage report shows tokens and USD cost per query with anomaly alerts |
 | P1 | Reranker weight tuning + ablation harness | Calibrates fusion vs keyword weighting for different query types | Best weight profile selected from reproducible benchmark runs |
 | P2 | Database connectors (Snowflake/Postgres/MySQL) | Enables direct schema ingestion from customer systems | Time from connection to first draft config is reduced |
 | P2 | Multi-tenant service mode with auth and quotas | Supports production deployment across multiple customers | Stable latency/SLO under concurrent workloads |
@@ -26,4 +27,5 @@ This document lists high-value enhancements that are intentionally out of scope 
 
 - Current project scope remains deterministic-first and test-first.
 - Any LLM expansion should remain behind flags and quality gates.
+- Token and cost tracking becomes active when optional LLM generation or fallback paths are enabled.
 - Every new feature should include measurable acceptance criteria before release.

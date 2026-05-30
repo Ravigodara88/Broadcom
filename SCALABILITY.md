@@ -15,15 +15,16 @@ should trigger an ingestion job that re-chunks the affected docs, refreshes
 metadata such as `pii_category`, reruns Recall@3 evaluation, and only publishes
 the updated index if the retrieval quality gate still passes.
 
-At 500 customers running schema analysis weekly, the core detector cost is
-effectively zero in LLM spend because it is deterministic. If an optional LLM
-fallback were enabled for, say, 5% of ambiguous columns and a typical weekly
-run sent 250 columns to a small model at low token volume, the monthly cost
-would still be manageable. A concrete estimate is roughly $150-$300/month at
-this scale (about 0.5M fallback calls/month with very small prompt/response
-payloads and aggressive caching). The first optimization should be to reduce LLM
-use through better rules, caching, and review-queue thresholds rather than to
-scale model traffic blindly.
+At 500 customers running schema analysis weekly, baseline detector spend is
+near-zero when it stays on deterministic and embedding tiers (no mandatory LLM
+calls). In deployments where optional LLM fallback is enabled for low-confidence
+cases, spend becomes non-zero and should be modeled explicitly. If fallback were
+used for about 5% of ambiguous columns and a typical weekly run sent 250 columns
+to a small model at low token volume, monthly cost would still be manageable.
+A concrete estimate is roughly $150-$300/month at this scale (about 0.5M fallback
+calls/month with very small prompt/response payloads and aggressive caching).
+The first optimization should be to reduce LLM use through better rules,
+caching, and review-queue thresholds rather than to scale model traffic blindly.
 
 In production I would alert on recall proxy drift, review-queue growth,
 retrieval Recall@3 degradation, and config-generation coverage. Example
