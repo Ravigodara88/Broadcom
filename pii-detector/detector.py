@@ -7,12 +7,14 @@ Three implementation tiers (Option C — Hybrid):
   Tier 2 — Embeddings    : sentence-transformers cosine similarity vs. PII
                             category prototypes.  Blended with rule score.
                             Used when rules are uncertain (< auto_tag_threshold).
-  Tier 3 — LLM fallback  : OpenAI structured-output call (gpt-4o-mini by
-                            default).  Invoked only when the blended score is
-                            still below the review threshold AND an
-                            OPENAI_API_KEY is present in the environment.
-                            Degrades gracefully to the embedding result if no
-                            key is configured.
+  Tier 3 — LLM fallback  : OpenAI-compatible chat call (model controlled by
+                            OPENAI_CHAT_MODEL, default gpt-4o-mini) via an
+                            optional proxy (OPENAI_BASE_URL).  Auth via
+                            CI_TOKEN or OPENAI_API_KEY; optional custom
+                            request header (LLM_APP_HEADER_NAME/VALUE).  Invoked only when the
+                            blended score is still below the review threshold
+                            AND a key is present.  Degrades gracefully to the
+                            embedding result if no key is configured.
 """
 
 from __future__ import annotations
@@ -23,8 +25,17 @@ import ipaddress
 import json
 import logging
 import os
+from pathlib import Path
 import re
 from typing import Any
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover
+    def load_dotenv(*_args, **_kwargs) -> bool:
+        return False
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 import numpy as np
 from pii_patterns import (
@@ -585,6 +596,23 @@ class HybridPiiDetector(PiiDetector):
                 llm_result["detection_method"] = "llm"
                 return llm_result
 
+        # Intermediate fallback: blended clears the review threshold but LLM was
+        # unavailable (no API key).  Surface as review-required PII rather than
+        # silently discarding the embedding signal.
+        if blended >= self.review_threshold and best_category:
+            result = self._build_ai_result(
+                column=column,
+                category=best_category,
+                confidence=min(blended, 0.99),
+                reasoning=(
+                    f"Embedding similarity {embed_sim:.2f} for {best_category}; "
+                    f"blended score {blended:.2f} (rule {rule_conf:.2f} + "
+                    f"embed {embed_sim:.2f}) — flagged for human review."
+                ),
+            )
+            result["detection_method"] = "rules+embedding"
+            return result
+
         # Fallback: return rule result enriched with embedding context.
         if embed_sim > rule_conf and best_category:
             result["reasoning"] = (
@@ -674,9 +702,13 @@ class HybridPiiDetector(PiiDetector):
                     "Loaded sentence-transformer model from local cache: %s",
                     model_name,
                 )
-            except Exception:
-                logger.info("Local cache miss — downloading %s", model_name)
-                cls._st_model = SentenceTransformer(model_name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Sentence-transformer model not found in local cache: {model_name!r}.\n"
+                    "To cache it, run once on a network with internet access:\n"
+                    "  python -c \"from sentence_transformers import SentenceTransformer; "
+                    "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')\""
+                ) from exc
             finally:
                 # Restore the original function in case other code relies on it.
                 if _sc is not None and _orig is not None:
@@ -703,19 +735,36 @@ class HybridPiiDetector(PiiDetector):
     # ------------------------------------------------------------------
 
     def _llm_classify(self, column: dict, descriptor_text: str) -> dict | None:
-        """Call OpenAI gpt-4o-mini to classify the column.
+        """Call an OpenAI-compatible chat model to classify the column.
+
+        Uses the same proxy/auth convention as the RAG service:
+          - API key  : CI_TOKEN  (preferred) or OPENAI_API_KEY
+          - Base URL : OPENAI_BASE_URL  (optional; omit to use api.openai.com)
+          - Header   : LLM_APP_HEADER_NAME: LLM_APP_HEADER_VALUE  (if both set)
+          - Model    : OPENAI_CHAT_MODEL  (defaults to gpt-4o-mini)
 
         Returns a result dict on success; ``None`` if the API is unavailable or
         the call fails (enabling graceful fallback to the embedding result).
         """
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = (os.getenv("CI_TOKEN") or os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             return None
+
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+        header_name = os.getenv("LLM_APP_HEADER_NAME", "").strip()
+        header_value = os.getenv("LLM_APP_HEADER_VALUE", "").strip()
+        default_headers = {header_name: header_value} if (header_name and header_value) else None
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
 
         try:
             import openai  # noqa: PLC0415
 
-            client = openai.OpenAI(api_key=api_key)
+            client_kwargs: dict = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
+            client = openai.OpenAI(**client_kwargs)
         except Exception as exc:
             logger.warning("OpenAI client init failed: %s", exc)
             return None
@@ -735,7 +784,7 @@ class HybridPiiDetector(PiiDetector):
         )
         try:
             response = client.chat.completions.create(
-                model=os.getenv("DEFAULT_CHAT_MODEL", "gpt-4o-mini"),
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 temperature=0,

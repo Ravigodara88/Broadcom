@@ -155,3 +155,9 @@ def _infer_categories(heading: str, content: str, doc_categories: tuple[str, ...
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
     return slug or "section"
+
+
+if __name__ == "__main__":
+    chunks = load_corpus()
+    source_files = sorted({chunk.source_file for chunk in chunks})
+    print(f"Loaded {len(chunks)} chunks from {len(source_files)} corpus files.")

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import sys
 from typing import Any
 
+from dotenv import load_dotenv
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / ".env")
 
 try:
     from .tools import detect_pii_columns, generate_masking_config, search_masking_docs
@@ -119,11 +123,8 @@ class SchemaIntelligenceAgent:
         if self._is_doc_question(lowered):
             return self._answer_doc_question(message)
 
-        return (
-            "I can help with schema PII analysis, masking configuration generation, "
-            "and masking documentation questions. Please share a schema or ask a "
-            "masking-related question."
-        )
+        # Keep any remaining in-scope informational requests grounded via retrieval.
+        return self._answer_doc_question(message)
 
     def _answer_doc_question(self, query: str) -> str:
         pii_category_filter = self._infer_pii_category_filter(query) if self.use_category_filters else None
@@ -236,16 +237,67 @@ class SchemaIntelligenceAgent:
         return match.group(1) if match else normalized
 
     def _is_out_of_scope(self, lowered: str) -> bool:
-        out_of_scope_terms = (
-            "weather",
-            "capital of",
-            "football",
-            "cricket",
-            "movie",
-            "recipe",
-            "stock price",
+        phrase_terms = (
+            "data masking",
+            "masking rule",
+            "masking rules",
+            "masking function",
+            "masking functions",
+            "social security",
+            "credit card",
+            "account number",
+            "date of birth",
+            "ip address",
+            "national id",
+            "full name",
+            "phone number",
+            "email address",
+            "review queue",
+            "masking job",
         )
-        return any(term in lowered for term in out_of_scope_terms)
+        token_terms = {
+            "pii",
+            "schema",
+            "column",
+            "table",
+            "mask",
+            "masking",
+            "masked",
+            "detect",
+            "detection",
+            "gdpr",
+            "ccpa",
+            "compliance",
+            "comply",
+            "function",
+            "functions",
+            "configure",
+            "configuration",
+            "troubleshoot",
+            "troubleshooting",
+            "performance",
+            "review",
+            "confidence",
+            "anonymize",
+            "anonymized",
+            "anonymization",
+            "email",
+            "phone",
+            "ssn",
+            "dob",
+            "aadhaar",
+            "passport",
+        }
+        function_tokens = {function.lower() for function in FUNCTION_TO_CATEGORY}
+        tokens = set(re.findall(r"[a-z0-9_]+", lowered))
+
+        if any(phrase in lowered for phrase in phrase_terms):
+            return False
+        if tokens & token_terms:
+            return False
+        if tokens & function_tokens:
+            return False
+        return True
 
     def _is_doc_question(self, lowered: str) -> bool:
         doc_terms = (
@@ -273,6 +325,53 @@ class SchemaIntelligenceAgent:
 
     def _is_single_column_question(self, message: str) -> bool:
         return bool(re.search(r"is column\s+\S+\s+in table\s+\S+\s+pii\??", message, flags=re.IGNORECASE))
+
+    def _llm_chat(self, message: str) -> str:
+        """Fall back to LLM for questions not matched by deterministic routing."""
+        api_key = (os.getenv("CI_TOKEN") or os.getenv("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            return (
+                "I can help with schema PII analysis, masking configuration generation, "
+                "and masking documentation questions. Please share a schema or ask a "
+                "masking-related question."
+            )
+        try:
+            import openai
+        except ImportError:
+            return (
+                "LLM response unavailable (openai package not installed). "
+                "I can help with schema PII analysis, masking config, and docs questions."
+            )
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
+        header_name = os.getenv("LLM_APP_HEADER_NAME", "").strip()
+        header_value = os.getenv("LLM_APP_HEADER_VALUE", "").strip()
+        default_headers = {header_name: header_value} if (header_name and header_value) else None
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers=default_headers,
+        )
+        system_prompt = (
+            "You are a data-masking assistant specialising in PII detection, data masking "
+            "functions, masking job configuration, GDPR/CCPA compliance, and related "
+            "troubleshooting. Only answer questions about these topics. "
+            "If a question is unrelated, reply exactly: "
+            "'That is outside my scope. I can help with PII detection and data masking.'"
+        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message},
+                ],
+                max_tokens=512,
+                temperature=0.2,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as exc:  # noqa: BLE001
+            return f"LLM call failed: {exc}"
 
     def _build_single_column_descriptor(self, message: str) -> dict[str, Any]:
         match = re.search(

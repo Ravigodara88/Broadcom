@@ -1,14 +1,19 @@
-"""Hybrid retrieval for masking documentation using TF-IDF, BM25, and RRF."""
+"""Hybrid retrieval for masking documentation using sentence-transformers FAISS, rank_bm25, and RRF."""
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import asdict
+from collections import defaultdict
 import json
-import math
+import logging
+import os
 from pathlib import Path
 import re
 from typing import Any
+
+import faiss
+import numpy as np
+from rank_bm25 import BM25Okapi
+from sentence_transformers import SentenceTransformer
 
 try:
     from .ingest import DEFAULT_CORPUS_DIR, DocumentChunk, load_corpus
@@ -16,8 +21,79 @@ except ImportError:  # pragma: no cover - script execution fallback
     from ingest import DEFAULT_CORPUS_DIR, DocumentChunk, load_corpus
 
 
+_EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+_embed_model: SentenceTransformer | None = None
+logger = logging.getLogger(__name__)
+
+# Per-chunk embedding cache: chunk_id -> L2-normalised float32 embedding
+_emb_cache: dict[str, np.ndarray] = {}
+
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_EVAL_PATH = Path(__file__).with_name("eval").joinpath("masking_queries.json")
+
+
+def _get_embed_model() -> SentenceTransformer:
+    """Lazy-load the sentence-transformer model (cached at module level).
+
+    Loading strategy for reliability:
+    1) Try local cache first (no network), which works with corporate SSL limits.
+    2) If local cache is missing and HF_HUB_OFFLINE is not enabled, try online.
+    """
+    global _embed_model
+    if _embed_model is None:
+        offline = _is_truthy_env(os.getenv("HF_HUB_OFFLINE", ""))
+
+        # Suppress transformers' safetensors auto-conversion probe that can
+        # trigger unnecessary HF Hub network calls in restricted environments.
+        try:
+            import transformers.modeling_utils as _mu  # noqa: PLC0415
+
+            _orig_auto_conversion = _mu.auto_conversion
+            _mu.auto_conversion = lambda *a, **kw: None
+            _modeling_utils = _mu
+        except Exception:
+            _orig_auto_conversion = None
+            _modeling_utils = None
+
+        try:
+            try:
+                _embed_model = SentenceTransformer(_EMBED_MODEL_NAME, local_files_only=True)
+                logger.info("Loaded sentence-transformer model from local cache: %s", _EMBED_MODEL_NAME)
+            except Exception as local_exc:
+                if offline:
+                    raise RuntimeError(
+                        f"Sentence-transformer model not found in local cache: {_EMBED_MODEL_NAME!r}.\n"
+                        "HF_HUB_OFFLINE is enabled, so online download is disabled.\n"
+                        "To cache once on a network-enabled machine, run:\n"
+                        "  python -c \"from sentence_transformers import SentenceTransformer; "
+                        "SentenceTransformer('all-MiniLM-L6-v2')\""
+                    ) from local_exc
+                logger.warning(
+                    "Local model cache unavailable (%s). Falling back to online load for %s.",
+                    local_exc,
+                    _EMBED_MODEL_NAME,
+                )
+                _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
+        finally:
+            if _modeling_utils is not None and _orig_auto_conversion is not None:
+                _modeling_utils.auto_conversion = _orig_auto_conversion
+    return _embed_model
+
+
+def _is_truthy_env(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_chunk_embeddings(chunks: list[DocumentChunk]) -> np.ndarray:
+    """Return L2-normalised float32 embeddings for chunks, caching per chunk_id."""
+    model = _get_embed_model()
+    missing = [c for c in chunks if c.chunk_id not in _emb_cache]
+    if missing:
+        texts = [c.text for c in missing]
+        new_embs = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True).astype("float32")
+        for chunk, emb in zip(missing, new_embs):
+            _emb_cache[chunk.chunk_id] = emb
+    return np.stack([_emb_cache[c.chunk_id] for c in chunks])
 
 
 def retrieve(
@@ -26,20 +102,43 @@ def retrieve(
     top_k: int = 3,
     corpus_dir: Path | str = DEFAULT_CORPUS_DIR,
 ) -> list[dict[str, Any]]:
-    """Retrieve relevant chunks using vector similarity, BM25, and RRF."""
+    """Retrieve relevant chunks using FAISS vector similarity, BM25, and RRF."""
 
     chunks = load_corpus(corpus_dir)
     candidates = _filter_chunks(chunks, pii_category_filter)
     if not candidates:
         return []
 
-    query_tokens = _tokenize(query)
-    vector_scores = _vector_scores(query_tokens, candidates)
-    bm25_scores = _bm25_scores(query_tokens, candidates)
+    # --- Vector search: sentence-transformers embeddings + FAISS IndexFlatIP ---
+    corpus_embeddings = _get_chunk_embeddings(candidates)  # (N, dim), cosine-ready
+    model = _get_embed_model()
+    query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True).astype("float32")
 
+    dim = corpus_embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(corpus_embeddings)
+    scores_arr, idx_arr = index.search(query_embedding, len(candidates))
+
+    vector_scores: dict[str, float] = {}
+    for score, idx in zip(scores_arr[0], idx_arr[0]):
+        if idx >= 0:
+            vector_scores[candidates[idx].chunk_id] = float(score)
+
+    # --- BM25 search: rank_bm25.BM25Okapi ---
+    query_tokens = _tokenize(query)
+    tokenized_docs = [_tokenize(chunk.text) for chunk in candidates]
+    bm25 = BM25Okapi(tokenized_docs)
+    bm25_raw = bm25.get_scores(query_tokens)
+    bm25_scores: dict[str, float] = {
+        chunk.chunk_id: float(score)
+        for chunk, score in zip(candidates, bm25_raw)
+    }
+
+    # --- RRF fusion ---
     vector_rank = _sorted_ids(vector_scores)
     bm25_rank = _sorted_ids(bm25_scores)
     fused_scores = _rrf_fuse(vector_rank, bm25_rank)
+
     if pii_category_filter:
         normalized_filter = pii_category_filter.upper()
         for chunk in candidates:
@@ -141,60 +240,6 @@ def _tokenize(text: str) -> list[str]:
     return TOKEN_RE.findall(text.lower())
 
 
-def _vector_scores(query_tokens: list[str], chunks: list[DocumentChunk]) -> dict[str, float]:
-    doc_tokens = [_tokenize(chunk.text) for chunk in chunks]
-    doc_freq: Counter[str] = Counter()
-    for tokens in doc_tokens:
-        doc_freq.update(set(tokens))
-
-    total_docs = len(chunks)
-    idf = {
-        token: math.log((1 + total_docs) / (1 + frequency)) + 1.0
-        for token, frequency in doc_freq.items()
-    }
-
-    query_vector = _tfidf_vector(query_tokens, idf)
-    query_norm = _vector_norm(query_vector)
-
-    scores: dict[str, float] = {}
-    for chunk, tokens in zip(chunks, doc_tokens):
-        doc_vector = _tfidf_vector(tokens, idf)
-        denominator = query_norm * _vector_norm(doc_vector)
-        if denominator == 0:
-            scores[chunk.chunk_id] = 0.0
-            continue
-        scores[chunk.chunk_id] = _dot_product(query_vector, doc_vector) / denominator
-    return scores
-
-
-def _bm25_scores(query_tokens: list[str], chunks: list[DocumentChunk]) -> dict[str, float]:
-    tokenized_docs = [_tokenize(chunk.text) for chunk in chunks]
-    avg_doc_len = sum(len(tokens) for tokens in tokenized_docs) / max(1, len(tokenized_docs))
-    doc_freq: Counter[str] = Counter()
-    for tokens in tokenized_docs:
-        doc_freq.update(set(tokens))
-
-    total_docs = len(chunks)
-    k1 = 1.5
-    b = 0.75
-    scores: dict[str, float] = {}
-
-    for chunk, tokens in zip(chunks, tokenized_docs):
-        tf = Counter(tokens)
-        doc_len = len(tokens) or 1
-        score = 0.0
-        for token in query_tokens:
-            if token not in tf:
-                continue
-            df = doc_freq[token]
-            idf = math.log(((total_docs - df + 0.5) / (df + 0.5)) + 1.0)
-            numerator = tf[token] * (k1 + 1)
-            denominator = tf[token] + k1 * (1 - b + b * (doc_len / avg_doc_len))
-            score += idf * (numerator / denominator)
-        scores[chunk.chunk_id] = score
-    return scores
-
-
 def _rrf_fuse(*rankings: list[str], rrf_k: int = 60) -> dict[str, float]:
     fused: defaultdict[str, float] = defaultdict(float)
     for ranking in rankings:
@@ -205,22 +250,6 @@ def _rrf_fuse(*rankings: list[str], rrf_k: int = 60) -> dict[str, float]:
 
 def _sorted_ids(scores: dict[str, float]) -> list[str]:
     return [chunk_id for chunk_id, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True)]
-
-
-def _tfidf_vector(tokens: list[str], idf: dict[str, float]) -> dict[str, float]:
-    counts = Counter(tokens)
-    total = sum(counts.values()) or 1
-    return {token: (count / total) * idf.get(token, 0.0) for token, count in counts.items()}
-
-
-def _vector_norm(vector: dict[str, float]) -> float:
-    return math.sqrt(sum(value * value for value in vector.values()))
-
-
-def _dot_product(left: dict[str, float], right: dict[str, float]) -> float:
-    if len(left) > len(right):
-        left, right = right, left
-    return sum(value * right.get(token, 0.0) for token, value in left.items())
 
 
 if __name__ == "__main__":

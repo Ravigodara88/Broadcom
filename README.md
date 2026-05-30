@@ -49,7 +49,8 @@ User Question
    v
 +-------------------------+
 | Hybrid RAG              |
-| TF-IDF + BM25 + RRF     |
+| SentenceTransformer +   |
+| FAISS + BM25 + RRF      |
 | pii_category filtering  |
 +-------------------------+
    |
@@ -65,10 +66,22 @@ Preferred one-command setup:
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 ```
 
+Optional one-time model warm-up (recommended before running in offline mode):
+
+```bash
+./.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+```
+
 Run the detector and generator tests:
 
 ```bash
 ./.venv/bin/python -m pytest -q pii-detector/tests masking-generator/tests
+```
+
+If your network blocks HuggingFace SSL/proxy traffic, run commands with:
+
+```bash
+FORCE_HF_OFFLINE=1 ./run.sh test
 ```
 
 Run the Day 3 quality suite:
@@ -86,7 +99,7 @@ Generate the A/B baseline markdown:
 Evaluate RAG Recall@3:
 
 ```bash
-python3 -m rag.retrieve
+HF_HUB_OFFLINE=1 python3 -m rag.retrieve
 ```
 
 ## Design Decisions
@@ -100,9 +113,9 @@ python3 -m rag.retrieve
 - Kept the agent policy-driven rather than open-ended. The goal is reliable tool
   orchestration, not chatbot creativity, so documentation questions always go
   through retrieval before answering.
-- Implemented hybrid retrieval with TF-IDF-style vector similarity, BM25, and
-  Reciprocal Rank Fusion because the brief explicitly requires hybrid retrieval
-  rather than pure semantic search.
+- Implemented hybrid retrieval with sentence-transformer embeddings (FAISS),
+  BM25, and Reciprocal Rank Fusion because the brief explicitly requires hybrid
+  retrieval rather than pure semantic search.
 - Routed low-confidence detections into a review queue instead of forcing
   automation. That reflects the risk asymmetry in masking workflows, where a
   false negative is more serious than extra review effort.

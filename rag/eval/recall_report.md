@@ -1,11 +1,11 @@
 # RAG Recall Report
 
-Initial evaluation completed against `masking_queries.json`.
+Evaluation completed against `masking_queries.json`.
 
 ## Current Metrics
 
-- Retrieval strategy: TF-IDF vector similarity + BM25 + Reciprocal Rank Fusion
-- Filter behavior: category-specific chunks are boosted when `pii_category_filter` is supplied
+- Retrieval strategy: FAISS dense vector search (sentence-transformers `all-MiniLM-L6-v2`) + BM25 keyword search, fused via Reciprocal Rank Fusion (RRF)
+- Filter behavior: `pii_category_filter` restricts the candidate chunk pool to category-matched and GENERAL chunks before ranking
 - Recall@3: `1.00` (`10/10`)
 
 ## Query Set Notes

@@ -61,10 +61,24 @@ def test_doc_question_triggers_retrieval() -> None:
     assert "search_masking_docs" in tracker.called_tools
 
 
+def test_generic_doc_question_triggers_retrieval_and_citation() -> None:
+    with tool_call_tracker() as tracker:
+        response = agent.chat("What masking functions are available?")
+    assert "search_masking_docs" in tracker.called_tools
+    assert response_cites_source(response)
+
+
 def test_out_of_scope_query_rejected() -> None:
     response = agent.chat("What is the capital of France?")
     assert_no_hallucination(response)
     assert any(phrase in response.lower() for phrase in ["out of scope", "masking", "data"])
+
+
+def test_personal_prompt_rejected_without_tool_call() -> None:
+    with tool_call_tracker() as tracker:
+        response = agent.chat("What is your name?")
+    assert tracker.called_tools == []
+    assert "out of scope" in response.lower()
 
 
 def test_pii_detector_recall_regression() -> None:
@@ -99,3 +113,19 @@ def test_single_column_question_returns_reasoning() -> None:
     response = agent.chat("Is column ref_code in table ORDERS PII?")
     assert "confidence" in response.lower()
     assert "reason" in response.lower() or "classified" in response.lower()
+
+
+def test_gdpr_compliance_answer_is_grounded() -> None:
+    response = agent.chat("How do I comply with GDPR when masking customer data?")
+    assert any(keyword in response.lower() for keyword in ["gdpr", "compliance", "mask", "pii", "personal"])
+    assert_no_hallucination(response)
+    assert response_cites_source(response)
+
+
+def test_masking_config_generated_via_agent_chat() -> None:
+    schema = load_test_schema("10_column_schema.json")
+    detections = detect_pii_columns(schema)
+    with tool_call_tracker() as tracker:
+        response = agent.chat("Generate a masking configuration for these results", detections=detections)
+    assert "generate_masking_config" in tracker.called_tools
+    assert "masking_rules" in response

@@ -211,6 +211,8 @@ CATEGORY_RULES = {
             "birth_date": 0.80,
             "dob": 0.78,
             "birthday": 0.64,
+            "birth_info": 0.65,
+            "birthdate": 0.72,
             "fecha_nacimiento": 0.84,
         },
         "tokens": {

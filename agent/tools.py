@@ -13,12 +13,12 @@ sys.path.insert(0, str(ROOT_DIR / "pii-detector"))
 sys.path.insert(0, str(ROOT_DIR / "masking-generator"))
 sys.path.insert(0, str(ROOT_DIR))
 
-from detector import PiiDetector
+from detector import HybridPiiDetector
 from generator import MaskingConfigGenerator
 from rag.retrieve import retrieve
 
 
-_DETECTOR = PiiDetector()
+_DETECTOR = HybridPiiDetector()
 _GENERATOR = MaskingConfigGenerator()
 _TRACKERS: list["ToolCallTracker"] = []
 
