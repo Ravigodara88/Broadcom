@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from detector import PiiDetector
+from detector import PiiDetector, HybridPiiDetector
 from pii_patterns import REQUIRED_PII_CATEGORIES
 
 
@@ -117,3 +117,114 @@ def test_expected_categories_match_on_golden_set() -> None:
         if expected["is_pii"] and expected["pii_category"] != result["pii_category"]:
             mismatches.append((case["input"]["column_name"], expected, result))
     assert not mismatches, f"Unexpected golden-set mismatches: {mismatches}"
+
+
+# ---------------------------------------------------------------------------
+# HybridPiiDetector tests
+# ---------------------------------------------------------------------------
+
+_REQUIRED_OUTPUT_KEYS = {
+    "is_pii",
+    "confidence",
+    "pii_category",
+    "recommended_masking_function",
+    "review_required",
+    "reasoning",
+}
+
+
+def test_hybrid_output_contract_clear_pii() -> None:
+    """HybridPiiDetector must return all JD-required keys for a clear PII column."""
+    hybrid = HybridPiiDetector()
+    result = hybrid.detect(
+        {
+            "table_name": "CUSTOMERS",
+            "column_name": "email_address",
+            "data_type": "VARCHAR(255)",
+            "sample_values": ["alice@example.com", "bob@corp.org"],
+            "description": "Customer email address",
+        }
+    )
+    missing = _REQUIRED_OUTPUT_KEYS - result.keys()
+    assert not missing, f"Output missing required keys: {missing}"
+    assert result["is_pii"] is True
+    assert result["pii_category"] == "EMAIL"
+    assert result["recommended_masking_function"] is not None
+    assert "masking_function" not in result, "Old key 'masking_function' must not appear"
+
+
+def test_hybrid_output_contract_non_pii() -> None:
+    """HybridPiiDetector must return all JD-required keys for a non-PII column."""
+    hybrid = HybridPiiDetector()
+    result = hybrid.detect(
+        {
+            "table_name": "PRODUCTS",
+            "column_name": "product_id",
+            "data_type": "INTEGER",
+            "sample_values": ["1001", "1002", "1003"],
+            "description": "Internal product identifier",
+        }
+    )
+    missing = _REQUIRED_OUTPUT_KEYS - result.keys()
+    assert not missing, f"Output missing required keys: {missing}"
+    assert result["is_pii"] is False
+    assert "masking_function" not in result, "Old key 'masking_function' must not appear"
+
+
+def test_hybrid_llm_path_uses_correct_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM tier result must use 'recommended_masking_function', not 'masking_function'."""
+    import detector as det_module
+
+    # Force LLM path by stubbing the lower tiers
+    fake_llm_response = {
+        "table_name": "T",
+        "column_name": "ssn",
+        "is_pii": True,
+        "pii_category": "SSN",
+        "confidence": 0.95,
+        "recommended_masking_function": "mask_ssn",
+        "review_required": False,
+        "reasoning": "LLM says SSN",
+        "detection_method": "llm",
+    }
+
+    hybrid = HybridPiiDetector()
+    monkeypatch.setattr(hybrid, "_llm_classify", lambda col, txt: fake_llm_response)
+    # Lower rule confidence so Tier 1 fast-path is not taken
+    monkeypatch.setattr(det_module.PiiDetector, "detect", lambda self, col: {
+        "table_name": col.get("table_name", ""),
+        "column_name": col.get("column_name", ""),
+        "is_pii": False,
+        "pii_category": None,
+        "confidence": 0.1,
+        "recommended_masking_function": None,
+        "review_required": True,
+        "reasoning": "low rule confidence",
+    })
+
+    result = hybrid.detect(
+        {
+            "table_name": "T",
+            "column_name": "ssn",
+            "data_type": "CHAR(11)",
+            "sample_values": ["078-05-1120"],
+            "description": "Social security number",
+        }
+    )
+    assert "recommended_masking_function" in result
+    assert "masking_function" not in result
+
+
+def test_hybrid_build_ai_result_includes_table_column() -> None:
+    """_build_ai_result must echo table_name and column_name from the input column."""
+    hybrid = HybridPiiDetector()
+    result = hybrid._build_ai_result(
+        column={"table_name": "HR", "column_name": "dob"},
+        category="DATE_OF_BIRTH",
+        confidence=0.90,
+        reasoning="test",
+    )
+    assert result["table_name"] == "HR"
+    assert result["column_name"] == "dob"
+    assert "recommended_masking_function" in result
+    assert "masking_function" not in result

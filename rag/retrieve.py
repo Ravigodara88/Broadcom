@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - script execution fallback
     from ingest import DEFAULT_CORPUS_DIR, DocumentChunk, load_corpus
 
 
-TOKEN_RE = re.compile(r"[a-z0-9_]+")
+TOKEN_RE = re.compile(r"[a-z0-9]+")
 DEFAULT_EVAL_PATH = Path(__file__).with_name("eval").joinpath("masking_queries.json")
 
 
@@ -46,6 +46,7 @@ def retrieve(
             if normalized_filter in chunk.pii_categories or chunk.pii_category == normalized_filter:
                 fused_scores[chunk.chunk_id] = fused_scores.get(chunk.chunk_id, 0.0) + 0.02
 
+    chunk_by_id = {chunk.chunk_id: chunk for chunk in candidates}
     ordered_ids = sorted(
         fused_scores,
         key=lambda chunk_id: (
@@ -56,9 +57,17 @@ def retrieve(
         reverse=True,
     )
 
-    chunk_by_id = {chunk.chunk_id: chunk for chunk in candidates}
+    # Deduplicate: return at most one chunk per source document
+    seen_sources: set[str] = set()
+    deduped_ids: list[str] = []
+    for chunk_id in ordered_ids:
+        source = chunk_by_id[chunk_id].source_file
+        if source not in seen_sources:
+            seen_sources.add(source)
+            deduped_ids.append(chunk_id)
+
     results = []
-    for chunk_id in ordered_ids[:top_k]:
+    for chunk_id in deduped_ids[:top_k]:
         chunk = chunk_by_id[chunk_id]
         results.append(
             {
