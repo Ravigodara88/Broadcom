@@ -135,3 +135,43 @@ def test_masking_config_generated_via_agent_chat() -> None:
         response = agent.chat("Generate a masking configuration for these results", detections=detections)
     assert "generate_masking_config" in tracker.called_tools
     assert "masking_rules" in response
+
+
+def test_tool_calling_agent_uses_doc_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeToolCall:
+        def __init__(self, name: str, arguments: str, call_id: str = "call-1") -> None:
+            self.id = call_id
+            self.function = type("Function", (), {"name": name, "arguments": arguments})()
+
+    first_message = type(
+        "Message",
+        (),
+        {
+            "content": "",
+            "tool_calls": [FakeToolCall("search_masking_docs", json.dumps({"query": "What parameters does EMAIL_MASK accept?", "pii_category_filter": "EMAIL", "top_k": 1}))],
+        },
+    )()
+    second_message = type("Message", (), {"content": "EMAIL docs answer [Source: 04-email_mask.md#parameters]", "tool_calls": []})()
+    responses = [
+        type("Response", (), {"choices": [type("Choice", (), {"message": first_message})()]})(),
+        type("Response", (), {"choices": [type("Choice", (), {"message": second_message})()]})(),
+    ]
+
+    class FakeCompletions:
+        def __init__(self, queued_responses: list[object]) -> None:
+            self._queued_responses = queued_responses
+
+        def create(self, **_kwargs):
+            return self._queued_responses.pop(0)
+
+    fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": FakeCompletions(responses)})()})()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    tool_agent = SchemaIntelligenceAgent(use_tool_calling=True)
+    monkeypatch.setattr(tool_agent, "_build_openai_client", lambda _api_key: fake_client)
+
+    with tool_call_tracker() as tracker:
+        response = tool_agent.chat("What parameters does EMAIL_MASK accept?")
+
+    assert "search_masking_docs" in tracker.called_tools
+    assert response == "EMAIL docs answer [Source: 04-email_mask.md#parameters]"
