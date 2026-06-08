@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -27,6 +28,12 @@ class BaselineCase:
 class Variant:
     name: str
     agent: SchemaIntelligenceAgent
+
+
+@dataclass(frozen=True)
+class BaselineMode:
+    name: str
+    description: str
 
 
 CASES = [
@@ -66,15 +73,67 @@ def score_response(case: BaselineCase, response: str) -> tuple[int, int, int]:
     return relevance, grounding, policy
 
 
-def generate_baseline_results() -> str:
-    schema = json.loads(SCHEMA_PATH.read_text())
+def _has_llm_credentials() -> bool:
+    return bool((os.getenv("CI_TOKEN") or os.getenv("OPENAI_API_KEY") or "").strip())
+
+
+def _configured_ab_models() -> list[str]:
+    raw = os.getenv("AGENT_AB_MODELS", "").strip()
+    if not raw:
+        return []
+    models: list[str] = []
+    for value in raw.split(","):
+        model = value.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def _build_variants() -> tuple[BaselineMode, list[Variant]]:
+    model_names = _configured_ab_models()
+    if _has_llm_credentials() and len(model_names) >= 2:
+        variants = [
+            Variant(
+                f"tool_calling_{model_name}",
+                SchemaIntelligenceAgent(use_category_filters=True, use_tool_calling=True, tool_model=model_name),
+            )
+            for model_name in model_names
+        ]
+        return (
+            BaselineMode(
+                name="model_comparison",
+                description="Configured tool-calling model variants are compared directly using the same prompts and rubric.",
+            ),
+            variants,
+        )
+
     variants = [
         Variant("current_submission", SchemaIntelligenceAgent(use_category_filters=True)),
         Variant("control_no_category_filter", SchemaIntelligenceAgent(use_category_filters=False)),
     ]
+    return (
+        BaselineMode(
+            name="fallback_ablation",
+            description=(
+                "No live multi-model configuration detected, so the artifact falls back to comparing the shipped "
+                "submission against a retrieval-control variant. Set AGENT_AB_MODELS to two or more model names and "
+                "provide LLM credentials to run a true model comparison."
+            ),
+        ),
+        variants,
+    )
+
+
+def generate_baseline_results() -> str:
+    schema = json.loads(SCHEMA_PATH.read_text())
+    mode, variants = _build_variants()
 
     lines = [
         "# A/B Baseline Results",
+        "",
+        f"Mode: `{mode.name}`",
+        "",
+        mode.description,
         "",
         "Rubric: each query is scored from 0 to 5 using three dimensions: relevance (0-2), grounding (0-2), and policy discipline (0-1 or scenario-specific guardrail points).",
         "",
@@ -115,8 +174,9 @@ def generate_baseline_results() -> str:
             "",
             "## Interpretation",
             "",
-            "- `current_submission` is the preferred baseline because it uses category-aware retrieval and represents the intended shipped behavior.",
-            "- `control_no_category_filter` is an ablation baseline; future prompt or model revisions should outperform or at least match `current_submission` on this rubric.",
+            "- Higher totals indicate better grounded behavior on the fixed baseline prompts.",
+            "- In `model_comparison` mode, future model or model-version changes should be compared against the current best-scoring model variant.",
+            "- In `fallback_ablation` mode, the report remains useful as a control baseline, but it is not yet a true multi-model comparison artifact.",
         ]
     )
     markdown = "\n".join(lines) + "\n"

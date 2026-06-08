@@ -63,13 +63,19 @@ KEYWORD_TO_CATEGORY = {
 class SchemaIntelligenceAgent:
     """Deterministic agent that orchestrates detector, generator, and RAG tools."""
 
-    def __init__(self, use_category_filters: bool = True, use_tool_calling: bool | None = None) -> None:
+    def __init__(
+        self,
+        use_category_filters: bool = True,
+        use_tool_calling: bool | None = None,
+        tool_model: str | None = None,
+    ) -> None:
         self.use_category_filters = use_category_filters
         if use_tool_calling is None:
             env_value = os.getenv("AGENT_USE_TOOL_CALLING", "")
             self.use_tool_calling = env_value.strip().lower() in {"1", "true", "yes", "on"}
         else:
             self.use_tool_calling = use_tool_calling
+        self.tool_model = tool_model or os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
 
     def chat(
         self,
@@ -380,11 +386,10 @@ class SchemaIntelligenceAgent:
         ]
 
         tools = self._tool_specs()
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
         for _ in range(3):
             try:
                 response = client.chat.completions.create(
-                    model=model,
+                    model=self.tool_model,
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",

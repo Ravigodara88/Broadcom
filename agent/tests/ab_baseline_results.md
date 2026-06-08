@@ -1,5 +1,9 @@
 # A/B Baseline Results
 
+Mode: `fallback_ablation`
+
+No live multi-model configuration detected, so the artifact falls back to comparing the shipped submission against a retrieval-control variant. Set AGENT_AB_MODELS to two or more model names and provide LLM credentials to run a true model comparison.
+
 Rubric: each query is scored from 0 to 5 using three dimensions: relevance (0-2), grounding (0-2), and policy discipline (0-1 or scenario-specific guardrail points).
 
 | Variant | Query | Relevance | Grounding | Policy | Total | Notes |
@@ -24,5 +28,6 @@ Rubric: each query is scored from 0 to 5 using three dimensions: relevance (0-2)
 
 ## Interpretation
 
-- `current_submission` is the preferred baseline because it uses category-aware retrieval and represents the intended shipped behavior.
-- `control_no_category_filter` is an ablation baseline; future prompt or model revisions should outperform or at least match `current_submission` on this rubric.
+- Higher totals indicate better grounded behavior on the fixed baseline prompts.
+- In `model_comparison` mode, future model or model-version changes should be compared against the current best-scoring model variant.
+- In `fallback_ablation` mode, the report remains useful as a control baseline, but it is not yet a true multi-model comparison artifact.
