@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,9 @@ try:
 except ImportError:  # pragma: no cover - script execution fallback
     sys.path.insert(0, str(ROOT_DIR / "agent"))
     from tools import detect_pii_columns, generate_masking_config, search_masking_docs
+
+
+logger = logging.getLogger(__name__)
 
 
 FUNCTION_TO_CATEGORY = {
@@ -59,8 +63,13 @@ KEYWORD_TO_CATEGORY = {
 class SchemaIntelligenceAgent:
     """Deterministic agent that orchestrates detector, generator, and RAG tools."""
 
-    def __init__(self, use_category_filters: bool = True) -> None:
+    def __init__(self, use_category_filters: bool = True, use_tool_calling: bool | None = None) -> None:
         self.use_category_filters = use_category_filters
+        if use_tool_calling is None:
+            env_value = os.getenv("AGENT_USE_TOOL_CALLING", "")
+            self.use_tool_calling = env_value.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            self.use_tool_calling = use_tool_calling
 
     def chat(
         self,
@@ -77,6 +86,11 @@ class SchemaIntelligenceAgent:
                 "That request is out of scope for this assistant. I can help with "
                 "PII detection, masking configuration, and masking documentation only."
             )
+
+        if self.use_tool_calling:
+            tool_response = self._tool_calling_chat(message, schema=schema, detections=detections)
+            if tool_response:
+                return tool_response
 
         if self._is_config_request(lowered):
             payload = detections or self._extract_json_payload(message)
@@ -326,52 +340,177 @@ class SchemaIntelligenceAgent:
     def _is_single_column_question(self, message: str) -> bool:
         return bool(re.search(r"is column\s+\S+\s+in table\s+\S+\s+pii\??", message, flags=re.IGNORECASE))
 
-    def _llm_chat(self, message: str) -> str:
-        """Fall back to LLM for questions not matched by deterministic routing."""
+    def _tool_calling_chat(
+        self,
+        message: str,
+        *,
+        schema: list[dict[str, Any]] | dict[str, Any] | None,
+        detections: list[dict[str, Any]] | None,
+    ) -> str | None:
+        """Optional raw tool-calling path backed by an OpenAI-compatible chat model."""
         api_key = (os.getenv("CI_TOKEN") or os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
-            return (
-                "I can help with schema PII analysis, masking configuration generation, "
-                "and masking documentation questions. Please share a schema or ask a "
-                "masking-related question."
-            )
+            return None
         try:
-            import openai
-        except ImportError:
-            return (
-                "LLM response unavailable (openai package not installed). "
-                "I can help with schema PII analysis, masking config, and docs questions."
+            client = self._build_openai_client(api_key)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("Tool-calling client unavailable: %s", exc)
+            return None
+
+        context_lines = []
+        if schema is not None:
+            context_lines.append("Schema context:\n" + json.dumps(schema, indent=2))
+        if detections is not None:
+            context_lines.append("Detection context:\n" + json.dumps(detections, indent=2))
+        user_content = message if not context_lines else f"{message}\n\n" + "\n\n".join(context_lines)
+
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Schema Intelligence Assistant for enterprise data masking. "
+                    "Only answer questions about PII detection, masking configuration, and masking documentation. "
+                    "Use the provided tools whenever they are relevant. "
+                    "For documentation questions, call search_masking_docs before answering. "
+                    "If the request asks to generate a masking configuration, call generate_masking_config. "
+                    "If the request asks to analyse a schema or a single column, call detect_pii_columns."
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ]
+
+        tools = self._tool_specs()
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
+        for _ in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0,
+                    max_tokens=700,
+                )
+            except Exception as exc:  # pragma: no cover - network/runtime fallback
+                logger.warning("Tool-calling request failed: %s", exc)
+                return None
+
+            assistant_message = response.choices[0].message
+            tool_calls = assistant_message.tool_calls or []
+            if not tool_calls:
+                content = (assistant_message.content or "").strip()
+                return content or None
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments,
+                            },
+                        }
+                        for call in tool_calls
+                    ],
+                }
             )
+
+            for tool_call in tool_calls:
+                tool_result = self._dispatch_tool_call(tool_call.function.name, tool_call.function.arguments)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(tool_result, indent=2),
+                    }
+                )
+
+        return None
+
+    def _build_openai_client(self, api_key: str):
+        import openai  # noqa: PLC0415
+
         base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
         header_name = os.getenv("LLM_APP_HEADER_NAME", "").strip()
         header_value = os.getenv("LLM_APP_HEADER_VALUE", "").strip()
         default_headers = {header_name: header_value} if (header_name and header_value) else None
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
-        client = openai.OpenAI(
+        return openai.OpenAI(
             api_key=api_key,
             base_url=base_url,
             default_headers=default_headers,
         )
-        system_prompt = (
-            "You are a data-masking assistant specialising in PII detection, data masking "
-            "functions, masking job configuration, GDPR/CCPA compliance, and related "
-            "troubleshooting. Only answer questions about these topics. "
-            "If a question is unrelated, reply exactly: "
-            "'That is outside my scope. I can help with PII detection and data masking.'"
-        )
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message},
-                ],
-                max_tokens=512,
-                temperature=0.2,
+
+    def _tool_specs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "detect_pii_columns",
+                    "description": "Analyse a schema or single column descriptor and return PII detection results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "schema": {
+                                "description": "A single column descriptor object or a list of column descriptors.",
+                                "oneOf": [{"type": "object"}, {"type": "array"}],
+                            }
+                        },
+                        "required": ["schema"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_masking_config",
+                    "description": "Generate a masking configuration from PII detection results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "detections": {
+                                "type": "array",
+                                "description": "Detection result objects returned by detect_pii_columns.",
+                            }
+                        },
+                        "required": ["detections"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_masking_docs",
+                    "description": "Retrieve masking documentation chunks. Must be used before answering documentation questions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "pii_category_filter": {"type": "string"},
+                            "top_k": {"type": "integer"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+        ]
+
+    def _dispatch_tool_call(self, tool_name: str, raw_arguments: str) -> Any:
+        arguments = json.loads(raw_arguments or "{}")
+        if tool_name == "detect_pii_columns":
+            return detect_pii_columns(arguments["schema"])
+        if tool_name == "generate_masking_config":
+            return generate_masking_config(arguments["detections"])
+        if tool_name == "search_masking_docs":
+            return search_masking_docs(
+                arguments["query"],
+                pii_category_filter=arguments.get("pii_category_filter") or None,
+                top_k=int(arguments.get("top_k", 3)),
             )
-            return response.choices[0].message.content.strip()
-        except Exception as exc:  # noqa: BLE001
-            return f"LLM call failed: {exc}"
+        raise ValueError(f"Unsupported tool call: {tool_name}")
 
     def _build_single_column_descriptor(self, message: str) -> dict[str, Any]:
         match = re.search(
