@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Callable
+
+try:
+    from rag.retrieve import retrieve as rag_retrieve
+except ImportError:  # pragma: no cover
+    import sys
+    from pathlib import Path
+
+    ROOT_DIR = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(ROOT_DIR))
+    from rag.retrieve import retrieve as rag_retrieve
 
 
 AUTO_CONFIGURE_THRESHOLD = 0.85
@@ -35,6 +45,12 @@ ALTERNATIVE_FUNCTIONS = {
     "NATIONAL_ID": ["SSN_MASK", "ACCOUNT_MASK"],
 }
 
+RetrieverFn = Callable[[str, str | None, int], list[dict[str, Any]]]
+
+
+def _default_doc_retriever(query: str, pii_category_filter: str | None, top_k: int = 1) -> list[dict[str, Any]]:
+    return rag_retrieve(query=query, pii_category_filter=pii_category_filter, top_k=top_k)
+
 
 @dataclass
 class DetectionResult:
@@ -53,8 +69,12 @@ class DetectionResult:
 class MaskingConfigGenerator:
     """Convert detector output into a masking configuration document."""
 
+    def __init__(self, doc_retriever: RetrieverFn | None = None) -> None:
+        self._doc_retriever = doc_retriever or _default_doc_retriever
+
     def generate(self, detections: list[Any]) -> dict[str, Any]:
         normalized_detections = [self._normalize_detection(detection) for detection in detections]
+        doc_reference_cache: dict[tuple[str | None, str | None], str] = {}
 
         masking_rules: list[dict[str, Any]] = []
         review_queue: list[dict[str, Any]] = []
@@ -69,7 +89,8 @@ class MaskingConfigGenerator:
                 review_queue.append(self._build_review_item(detection))
                 continue
 
-            masking_rules.append(self._build_masking_rule(detection))
+            doc_reference = self._resolve_doc_reference(detection, doc_reference_cache)
+            masking_rules.append(self._build_masking_rule(detection, doc_reference))
 
         return {
             "masking_job_name": f"AUTO_GENERATED_{date.today().isoformat()}",
@@ -97,7 +118,7 @@ class MaskingConfigGenerator:
             payload["column"] = payload.get("column_name")
         return payload
 
-    def _build_masking_rule(self, detection: dict[str, Any]) -> dict[str, Any]:
+    def _build_masking_rule(self, detection: dict[str, Any], doc_reference: str) -> dict[str, Any]:
         category = detection["pii_category"]
         return {
             "table": detection["table"],
@@ -106,7 +127,7 @@ class MaskingConfigGenerator:
             "parameters": {},
             "confidence": round(float(detection["confidence"]), 2),
             "requires_review": False,
-            "documentation_reference": DOCUMENTATION_REFERENCES[category],
+            "documentation_reference": doc_reference or DOCUMENTATION_REFERENCES[category],
         }
 
     def _build_review_item(self, detection: dict[str, Any]) -> dict[str, Any]:
@@ -129,3 +150,34 @@ class MaskingConfigGenerator:
             "suggested_function": detection.get("recommended_masking_function"),
             "alternatives": alternatives,
         }
+
+    def _resolve_doc_reference(
+        self,
+        detection: dict[str, Any],
+        cache: dict[tuple[str | None, str | None], str],
+    ) -> str:
+        category = detection.get("pii_category")
+        function_name = detection.get("recommended_masking_function")
+        cache_key = (category, function_name)
+        if cache_key in cache:
+            return cache[cache_key]
+
+        fallback = DOCUMENTATION_REFERENCES.get(category, "")
+        if not category or not function_name:
+            cache[cache_key] = fallback
+            return fallback
+
+        query = f"What does {function_name} do and what parameters does it accept?"
+        try:
+            results = self._doc_retriever(query, category, 1)
+        except Exception:
+            results = []
+
+        if results:
+            reference = str(results[0].get("metadata", {}).get("source", "")).strip()
+            if reference:
+                cache[cache_key] = reference
+                return reference
+
+        cache[cache_key] = fallback
+        return fallback

@@ -74,6 +74,27 @@ def test_documentation_references_exist() -> None:
         assert doc_file in corpus_files
 
 
+def test_documentation_reference_comes_from_retrieval_context() -> None:
+    retriever_calls: list[tuple[str, str | None, int]] = []
+
+    def fake_retriever(query: str, pii_category_filter: str | None, top_k: int) -> list[dict[str, object]]:
+        retriever_calls.append((query, pii_category_filter, top_k))
+        return [
+            {
+                "metadata": {
+                    "source": "04-email_mask.md#behavior",
+                }
+            }
+        ]
+
+    config = MaskingConfigGenerator(doc_retriever=fake_retriever).generate(sample_detections())
+
+    assert retriever_calls == [
+        ("What does EMAIL_MASK do and what parameters does it accept?", "EMAIL", 1)
+    ]
+    assert config["masking_rules"][0]["documentation_reference"] == "04-email_mask.md#behavior"
+
+
 def test_confidence_summary_counts_are_correct() -> None:
     config = generator.generate(sample_detections())
     assert config["confidence_summary"] == {

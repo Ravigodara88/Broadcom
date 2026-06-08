@@ -23,6 +23,12 @@ class BaselineCase:
     kind: str
 
 
+@dataclass(frozen=True)
+class Variant:
+    name: str
+    agent: SchemaIntelligenceAgent
+
+
 CASES = [
     BaselineCase("What does DATE_SHIFT do and what parameters does it accept?", "doc"),
     BaselineCase("What parameters does EMAIL_MASK accept?", "doc"),
@@ -32,59 +38,65 @@ CASES = [
 ]
 
 
-def score_response(case: BaselineCase, response: str) -> int:
-    score = 0
+def score_response(case: BaselineCase, response: str) -> tuple[int, int, int]:
+    relevance = 0
+    grounding = 0
+    policy = 0
     lowered = response.lower()
 
     if case.kind == "doc":
         if any(token in lowered for token in ["mask", "date", "parameter", "gdpr", "ccpa", "offset"]):
-            score += 2
+            relevance = 2
         if "[source:" in lowered:
-            score += 2
+            grounding = 2
         if "out of scope" not in lowered:
-            score += 1
+            policy = 1
     elif case.kind == "scope":
         if "out of scope" in lowered or "masking" in lowered:
-            score += 3
+            policy = 3
         if "hyderabad" not in lowered:
-            score += 2
+            grounding = 2
     elif case.kind == "missing_schema":
         if "provide" in lowered and ("schema" in lowered or "table name" in lowered):
-            score += 4
+            relevance = 2
+            policy = 2
         if "[source:" not in lowered:
-            score += 1
+            grounding = 1
 
-    return score
+    return relevance, grounding, policy
 
 
 def generate_baseline_results() -> str:
     schema = json.loads(SCHEMA_PATH.read_text())
-    variants = {
-        "category_aware": SchemaIntelligenceAgent(use_category_filters=True),
-        "broad_retrieval": SchemaIntelligenceAgent(use_category_filters=False),
-    }
+    variants = [
+        Variant("current_submission", SchemaIntelligenceAgent(use_category_filters=True)),
+        Variant("control_no_category_filter", SchemaIntelligenceAgent(use_category_filters=False)),
+    ]
 
     lines = [
         "# A/B Baseline Results",
         "",
-        "Rubric: each query is scored from 0 to 5 on relevance, grounding, and scope discipline.",
+        "Rubric: each query is scored from 0 to 5 using three dimensions: relevance (0-2), grounding (0-2), and policy discipline (0-1 or scenario-specific guardrail points).",
         "",
-        "| Variant | Query | Score | Notes |",
-        "|---|---|---:|---|",
+        "| Variant | Query | Relevance | Grounding | Policy | Total | Notes |",
+        "|---|---|---:|---:|---:|---:|---|",
     ]
 
-    totals = {name: 0 for name in variants}
+    totals = {variant.name: 0 for variant in variants}
 
     for case in CASES:
-        for variant_name, agent in variants.items():
+        for variant in variants:
             if case.prompt == "Analyse this schema for PII":
-                response = agent.chat(case.prompt, schema=schema)
+                response = variant.agent.chat(case.prompt, schema=schema)
             else:
-                response = agent.chat(case.prompt)
-            score = score_response(case, response)
-            totals[variant_name] += score
-            note = "Grounded and on-policy" if score >= 4 else "Needs follow-up tuning"
-            lines.append(f"| {variant_name} | {case.prompt} | {score} | {note} |")
+                response = variant.agent.chat(case.prompt)
+            relevance, grounding, policy = score_response(case, response)
+            total = relevance + grounding + policy
+            totals[variant.name] += total
+            note = "Grounded and on-policy" if total >= 4 else "Needs follow-up tuning"
+            lines.append(
+                f"| {variant.name} | {case.prompt} | {relevance} | {grounding} | {policy} | {total} | {note} |"
+            )
 
     lines.extend(
         [
@@ -103,8 +115,8 @@ def generate_baseline_results() -> str:
             "",
             "## Interpretation",
             "",
-            "- `category_aware` is the preferred baseline because it applies category filtering before retrieval.",
-            "- `broad_retrieval` provides a weaker comparison point for future prompt or model revisions.",
+            "- `current_submission` is the preferred baseline because it uses category-aware retrieval and represents the intended shipped behavior.",
+            "- `control_no_category_filter` is an ablation baseline; future prompt or model revisions should outperform or at least match `current_submission` on this rubric.",
         ]
     )
     markdown = "\n".join(lines) + "\n"
